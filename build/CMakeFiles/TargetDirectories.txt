@@ -1,0 +1,6 @@
+E:/QtProjects/HwInfoTest/build/CMakeFiles/hwinfo.dir
+E:/QtProjects/HwInfoTest/build/CMakeFiles/edit_cache.dir
+E:/QtProjects/HwInfoTest/build/CMakeFiles/rebuild_cache.dir
+E:/QtProjects/HwInfoTest/build/CMakeFiles/list_install_components.dir
+E:/QtProjects/HwInfoTest/build/CMakeFiles/install.dir
+E:/QtProjects/HwInfoTest/build/CMakeFiles/install/local.dir

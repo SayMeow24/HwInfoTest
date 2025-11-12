@@ -7,6 +7,8 @@
 #include <QStorageInfo>
 #include <QDir>
 #include <string>
+#include <iostream>
+#include <iomanip>
 
 // Platform-specific includes
 #ifdef _WIN32
@@ -16,7 +18,7 @@
 #include <dxgi.h>
 // Спробуємо включити нові версії DXGI якщо доступні
 #if defined(NTDDI_WIN10) || defined(_WIN32_WINNT_WIN10)
-    #include <dxgi1_4.h>
+#include <dxgi1_4.h>
 #endif
 #pragma comment(lib, "wbemuuid.lib")
 #pragma comment(lib, "dxgi.lib")
@@ -253,7 +255,7 @@ double HardwareInfoProvider::getRAMUsagePercent() const
 {
     quint64 total = getTotalRAM();
     if (total == 0) return 0.0;
-    
+
     quint64 used = getUsedRAM();
     return (used * 100.0) / total;
 }
@@ -284,7 +286,6 @@ QString HardwareInfoProvider::getWindowsGPUInfo() const
                 .arg(desc.DeviceId)
                 .arg(gpuName);
 
-            // уникаємо повторів
             if (!seenAdapters.contains(gpuKey)) {
                 seenAdapters.insert(gpuKey);
 
@@ -317,36 +318,36 @@ QString HardwareInfoProvider::getLinuxGPUFromSys() const
     QDir drmDir("/sys/class/drm");
     if (drmDir.exists()) {
         QStringList cards = drmDir.entryList(QStringList() << "card*", QDir::Dirs);
-        for (const QString &card : cards) {
+        for (const QString& card : cards) {
             if (card.contains("-")) continue;
-            
+
             QString devicePath = QString("/sys/class/drm/%1/device").arg(card);
             QFile vendorFile(devicePath + "/vendor");
             QFile deviceFile(devicePath + "/device");
-            
+
             QString vendor, device;
-            
+
             if (vendorFile.open(QIODevice::ReadOnly)) {
                 vendor = QString(vendorFile.readAll()).trimmed();
                 vendorFile.close();
             }
-            
+
             if (deviceFile.open(QIODevice::ReadOnly)) {
                 device = QString(deviceFile.readAll()).trimmed();
                 deviceFile.close();
             }
-            
+
             if (!vendor.isEmpty() || !device.isEmpty()) {
                 QString vendorName = vendor;
                 if (vendor == "0x8086") vendorName = "Intel";
                 else if (vendor == "0x10de") vendorName = "NVIDIA";
                 else if (vendor == "0x1002") vendorName = "AMD";
-                
+
                 return QString("%1 Graphics (Device: %2)").arg(vendorName, device);
             }
         }
     }
-    
+
     return QString();
 }
 
@@ -354,50 +355,51 @@ QString HardwareInfoProvider::getLinuxGPUFromLspci() const
 {
     QProcess process;
     process.start("lspci", QStringList() << "-v");
-    
+
     if (!process.waitForFinished(3000)) {
         return QString();
     }
-    
+
     QString output = process.readAllStandardOutput();
     QStringList lines = output.split('\n');
-    
+
     for (int i = 0; i < lines.size(); ++i) {
         QString line = lines[i];
         if (line.contains("VGA compatible controller:", Qt::CaseInsensitive) ||
             line.contains("3D controller:", Qt::CaseInsensitive)) {
-            
+
             int colonPos = line.lastIndexOf(':');
             if (colonPos > 0) {
                 QString gpuName = line.mid(colonPos + 1).trimmed();
-                
+
                 QString vram;
                 for (int j = i + 1; j < qMin(i + 10, lines.size()); ++j) {
                     QString nextLine = lines[j];
-                    if (nextLine.contains("Memory at", Qt::CaseInsensitive) && 
+                    if (nextLine.contains("Memory at", Qt::CaseInsensitive) &&
                         nextLine.contains("prefetchable", Qt::CaseInsensitive)) {
-                        
+
                         QRegularExpression sizeRegex(R"(\[size=(\d+)([KMG])\])");
                         QRegularExpressionMatch match = sizeRegex.match(nextLine);
                         if (match.hasMatch()) {
                             int size = match.captured(1).toInt();
                             QString unit = match.captured(2);
-                            
+
                             if (unit == "G") {
                                 vram = QString(" (VRAM: %1 GB)").arg(size);
-                            } else if (unit == "M") {
+                            }
+                            else if (unit == "M") {
                                 vram = QString(" (VRAM: %1 MB)").arg(size);
                             }
                             break;
                         }
                     }
                 }
-                
+
                 return gpuName + vram;
             }
         }
     }
-    
+
     return QString();
 }
 
@@ -407,12 +409,12 @@ QString HardwareInfoProvider::getLinuxGPUInfo() const
     if (!gpu.isEmpty()) {
         return gpu;
     }
-    
+
     gpu = getLinuxGPUFromSys();
     if (!gpu.isEmpty()) {
         return gpu;
     }
-    
+
     return "GPU information not available";
 }
 #endif
@@ -447,7 +449,7 @@ quint64 HardwareInfoProvider::getGPUMemoryMB() const
 #ifdef _WIN32
     IDXGIFactory* pFactory = nullptr;
     quint64 vram = 0;
-    
+
     if (SUCCEEDED(CreateDXGIFactory(__uuidof(IDXGIFactory), (void**)(&pFactory)))) {
         IDXGIAdapter* pAdapter = nullptr;
         if (pFactory->EnumAdapters(0, &pAdapter) != DXGI_ERROR_NOT_FOUND) {
@@ -468,59 +470,50 @@ quint64 HardwareInfoProvider::getGPUMemoryMB() const
 quint64 HardwareInfoProvider::getGPUUsedMemoryMB() const
 {
 #ifdef _WIN32
-    // Windows: спробуємо використати DXGI 1.4 (Windows 10+)
     quint64 usedMemory = 0;
-    
-    // Перевіряємо чи доступний IDXGIFactory4
-    #if defined(NTDDI_WIN10) || defined(_WIN32_WINNT_WIN10)
-        // Новіші Windows SDK - використовуємо DXGI 1.4
-        typedef HRESULT (WINAPI* PFN_CREATE_DXGI_FACTORY1)(REFIID, void**);
-        HMODULE hDxgi = LoadLibraryA("dxgi.dll");
-        
-        if (hDxgi) {
-            PFN_CREATE_DXGI_FACTORY1 pCreateDXGIFactory1 = 
-                (PFN_CREATE_DXGI_FACTORY1)GetProcAddress(hDxgi, "CreateDXGIFactory1");
-            
-            if (pCreateDXGIFactory1) {
-                IDXGIFactory1* pFactory1 = nullptr;
-                HRESULT hr = pCreateDXGIFactory1(__uuidof(IDXGIFactory1), (void**)&pFactory1);
-                
-                if (SUCCEEDED(hr) && pFactory1) {
-                    // Спробуємо отримати IDXGIFactory4
-                    IDXGIFactory4* pFactory4 = nullptr;
-                    hr = pFactory1->QueryInterface(__uuidof(IDXGIFactory4), (void**)&pFactory4);
-                    
-                    if (SUCCEEDED(hr) && pFactory4) {
-                        IDXGIAdapter3* pAdapter3 = nullptr;
-                        if (pFactory4->EnumAdapters(0, (IDXGIAdapter**)&pAdapter3) != DXGI_ERROR_NOT_FOUND) {
-                            DXGI_QUERY_VIDEO_MEMORY_INFO memoryInfo;
-                            if (SUCCEEDED(pAdapter3->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &memoryInfo))) {
-                                usedMemory = memoryInfo.CurrentUsage / 1024 / 1024;
-                            }
-                            pAdapter3->Release();
+
+#if defined(NTDDI_WIN10) || defined(_WIN32_WINNT_WIN10)
+    typedef HRESULT(WINAPI* PFN_CREATE_DXGI_FACTORY1)(REFIID, void**);
+    HMODULE hDxgi = LoadLibraryA("dxgi.dll");
+
+    if (hDxgi) {
+        PFN_CREATE_DXGI_FACTORY1 pCreateDXGIFactory1 =
+            (PFN_CREATE_DXGI_FACTORY1)GetProcAddress(hDxgi, "CreateDXGIFactory1");
+
+        if (pCreateDXGIFactory1) {
+            IDXGIFactory1* pFactory1 = nullptr;
+            HRESULT hr = pCreateDXGIFactory1(__uuidof(IDXGIFactory1), (void**)&pFactory1);
+
+            if (SUCCEEDED(hr) && pFactory1) {
+                IDXGIFactory4* pFactory4 = nullptr;
+                hr = pFactory1->QueryInterface(__uuidof(IDXGIFactory4), (void**)&pFactory4);
+
+                if (SUCCEEDED(hr) && pFactory4) {
+                    IDXGIAdapter3* pAdapter3 = nullptr;
+                    if (pFactory4->EnumAdapters(0, (IDXGIAdapter**)&pAdapter3) != DXGI_ERROR_NOT_FOUND) {
+                        DXGI_QUERY_VIDEO_MEMORY_INFO memoryInfo;
+                        if (SUCCEEDED(pAdapter3->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &memoryInfo))) {
+                            usedMemory = memoryInfo.CurrentUsage / 1024 / 1024;
                         }
-                        pFactory4->Release();
+                        pAdapter3->Release();
                     }
-                    pFactory1->Release();
+                    pFactory4->Release();
                 }
+                pFactory1->Release();
             }
-            FreeLibrary(hDxgi);
         }
-    #else
-        // Старіші Windows SDK - VRAM usage недоступний
-        // Повертаємо 0
-        usedMemory = 0;
-    #endif
-    
+        FreeLibrary(hDxgi);
+    }
+#endif
+
     return usedMemory;
-    
+
 #elif defined(__linux__)
-    // Linux: nvidia-smi для NVIDIA
     QProcess process;
-    process.start("nvidia-smi", QStringList() 
-        << "--query-gpu=memory.used" 
+    process.start("nvidia-smi", QStringList()
+        << "--query-gpu=memory.used"
         << "--format=csv,noheader,nounits");
-    
+
     if (process.waitForFinished(2000)) {
         QString output = process.readAllStandardOutput().trimmed();
         bool ok;
@@ -529,14 +522,13 @@ quint64 HardwareInfoProvider::getGPUUsedMemoryMB() const
             return used;
         }
     }
-    
-    // Linux: AMD через sysfs
+
     QDir drmDir("/sys/class/drm");
     if (drmDir.exists()) {
         QStringList cards = drmDir.entryList(QStringList() << "card*", QDir::Dirs);
-        for (const QString &card : cards) {
+        for (const QString& card : cards) {
             if (card.contains("-")) continue;
-            
+
             QString memUsedPath = QString("/sys/class/drm/%1/device/mem_info_vram_used").arg(card);
             QFile memUsedFile(memUsedPath);
             if (memUsedFile.open(QIODevice::ReadOnly)) {
@@ -549,7 +541,7 @@ quint64 HardwareInfoProvider::getGPUUsedMemoryMB() const
             }
         }
     }
-    
+
     return 0;
 #else
     return 0;
@@ -559,60 +551,50 @@ quint64 HardwareInfoProvider::getGPUUsedMemoryMB() const
 quint64 HardwareInfoProvider::getGPUFreeMemoryMB() const
 {
 #ifdef _WIN32
-    // Windows: отримуємо вільну VRAM через DXGI 1.4
     quint64 freeMemory = 0;
-    
-    // Перевіряємо чи доступний IDXGIFactory4
-    #if defined(NTDDI_WIN10) || defined(_WIN32_WINNT_WIN10)
-        typedef HRESULT (WINAPI* PFN_CREATE_DXGI_FACTORY1)(REFIID, void**);
-        HMODULE hDxgi = LoadLibraryA("dxgi.dll");
-        
-        if (hDxgi) {
-            PFN_CREATE_DXGI_FACTORY1 pCreateDXGIFactory1 = 
-                (PFN_CREATE_DXGI_FACTORY1)GetProcAddress(hDxgi, "CreateDXGIFactory1");
-            
-            if (pCreateDXGIFactory1) {
-                IDXGIFactory1* pFactory1 = nullptr;
-                HRESULT hr = pCreateDXGIFactory1(__uuidof(IDXGIFactory1), (void**)&pFactory1);
-                
-                if (SUCCEEDED(hr) && pFactory1) {
-                    // Спробуємо отримати IDXGIFactory4
-                    IDXGIFactory4* pFactory4 = nullptr;
-                    hr = pFactory1->QueryInterface(__uuidof(IDXGIFactory4), (void**)&pFactory4);
-                    
-                    if (SUCCEEDED(hr) && pFactory4) {
-                        IDXGIAdapter3* pAdapter3 = nullptr;
-                        if (pFactory4->EnumAdapters(0, (IDXGIAdapter**)&pAdapter3) != DXGI_ERROR_NOT_FOUND) {
-                            DXGI_QUERY_VIDEO_MEMORY_INFO memoryInfo;
-                            if (SUCCEEDED(pAdapter3->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &memoryInfo))) {
-                                // Budget - це загальна доступна пам'ять для процесу
-                                // CurrentUsage - використана пам'ять
-                                // Вільна = Budget - CurrentUsage
-                                freeMemory = (memoryInfo.Budget - memoryInfo.CurrentUsage) / 1024 / 1024;
-                            }
-                            pAdapter3->Release();
+
+#if defined(NTDDI_WIN10) || defined(_WIN32_WINNT_WIN10)
+    typedef HRESULT(WINAPI* PFN_CREATE_DXGI_FACTORY1)(REFIID, void**);
+    HMODULE hDxgi = LoadLibraryA("dxgi.dll");
+
+    if (hDxgi) {
+        PFN_CREATE_DXGI_FACTORY1 pCreateDXGIFactory1 =
+            (PFN_CREATE_DXGI_FACTORY1)GetProcAddress(hDxgi, "CreateDXGIFactory1");
+
+        if (pCreateDXGIFactory1) {
+            IDXGIFactory1* pFactory1 = nullptr;
+            HRESULT hr = pCreateDXGIFactory1(__uuidof(IDXGIFactory1), (void**)&pFactory1);
+
+            if (SUCCEEDED(hr) && pFactory1) {
+                IDXGIFactory4* pFactory4 = nullptr;
+                hr = pFactory1->QueryInterface(__uuidof(IDXGIFactory4), (void**)&pFactory4);
+
+                if (SUCCEEDED(hr) && pFactory4) {
+                    IDXGIAdapter3* pAdapter3 = nullptr;
+                    if (pFactory4->EnumAdapters(0, (IDXGIAdapter**)&pAdapter3) != DXGI_ERROR_NOT_FOUND) {
+                        DXGI_QUERY_VIDEO_MEMORY_INFO memoryInfo;
+                        if (SUCCEEDED(pAdapter3->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &memoryInfo))) {
+                            freeMemory = (memoryInfo.Budget - memoryInfo.CurrentUsage) / 1024 / 1024;
                         }
-                        pFactory4->Release();
+                        pAdapter3->Release();
                     }
-                    pFactory1->Release();
+                    pFactory4->Release();
                 }
+                pFactory1->Release();
             }
-            FreeLibrary(hDxgi);
         }
-    #else
-        // Старіші Windows SDK - недоступно
-        freeMemory = 0;
-    #endif
-    
+        FreeLibrary(hDxgi);
+    }
+#endif
+
     return freeMemory;
-    
+
 #elif defined(__linux__)
-    // Linux: nvidia-smi для NVIDIA
     QProcess process;
-    process.start("nvidia-smi", QStringList() 
-        << "--query-gpu=memory.free" 
+    process.start("nvidia-smi", QStringList()
+        << "--query-gpu=memory.free"
         << "--format=csv,noheader,nounits");
-    
+
     if (process.waitForFinished(2000)) {
         QString output = process.readAllStandardOutput().trimmed();
         bool ok;
@@ -621,35 +603,34 @@ quint64 HardwareInfoProvider::getGPUFreeMemoryMB() const
             return free;
         }
     }
-    
-    // AMD через sysfs
+
     QDir drmDir("/sys/class/drm");
     if (drmDir.exists()) {
         QStringList cards = drmDir.entryList(QStringList() << "card*", QDir::Dirs);
-        for (const QString &card : cards) {
+        for (const QString& card : cards) {
             if (card.contains("-")) continue;
-            
+
             QString memTotalPath = QString("/sys/class/drm/%1/device/mem_info_vram_total").arg(card);
             QString memUsedPath = QString("/sys/class/drm/%1/device/mem_info_vram_used").arg(card);
-            
+
             QFile memTotalFile(memTotalPath);
             QFile memUsedFile(memUsedPath);
-            
+
             if (memTotalFile.open(QIODevice::ReadOnly) && memUsedFile.open(QIODevice::ReadOnly)) {
                 QString totalStr = memTotalFile.readAll().trimmed();
                 QString usedStr = memUsedFile.readAll().trimmed();
-                
+
                 bool okTotal, okUsed;
                 quint64 totalBytes = totalStr.toULongLong(&okTotal);
                 quint64 usedBytes = usedStr.toULongLong(&okUsed);
-                
+
                 if (okTotal && okUsed) {
                     return (totalBytes - usedBytes) / 1024 / 1024;
                 }
             }
         }
     }
-    
+
     return 0;
 #else
     return 0;
@@ -660,13 +641,15 @@ double HardwareInfoProvider::getGPUMemoryUsagePercent() const
 {
     quint64 total = getGPUMemoryMB();
     if (total == 0) return 0.0;
-    
+
     quint64 used = getGPUUsedMemoryMB();
     return (used * 100.0) / total;
 }
 
+// Продовжується у наступному повідомленні (файл дуже великий)...
+
 // ========================================
-// Інформація про диски - Windows (комбінований метод)
+// Інформація про диски - Windows
 // ========================================
 
 #ifdef _WIN32
@@ -684,9 +667,6 @@ QString HardwareInfoProvider::getWindowsDiskType(const QString& drive) const
     if (cache.contains(driveLetter))
         return cache[driveLetter];
 
-    // ---------------------------
-    // 1. Ініціалізація COM
-    // ---------------------------
     HRESULT hres = CoInitializeEx(0, COINIT_MULTITHREADED);
     if (FAILED(hres) && hres != RPC_E_CHANGED_MODE) {
         qDebug() << "[DEBUG] CoInitializeEx не вдалося";
@@ -712,9 +692,6 @@ QString HardwareInfoProvider::getWindowsDiskType(const QString& drive) const
         return diskType;
     }
 
-    // ---------------------------
-    // 2. Основний запит: MSFT_PhysicalDisk
-    // ---------------------------
     IWbemServices* pSvc = NULL;
     hres = pLoc->ConnectServer(_bstr_t(L"ROOT\\Microsoft\\Windows\\Storage"),
         NULL, NULL, 0, NULL, 0, 0, &pSvc);
@@ -778,9 +755,6 @@ QString HardwareInfoProvider::getWindowsDiskType(const QString& drive) const
         pSvc->Release();
     }
 
-    // ---------------------------
-    // 3. Резервний запит: Win32_DiskDrive (якщо Unknown)
-    // ---------------------------
     if (diskType == "Unknown") {
         qDebug() << "[DEBUG] Переходимо до резервного запиту Win32_DiskDrive...";
         IWbemServices* pSvc2 = NULL;
@@ -832,9 +806,6 @@ QString HardwareInfoProvider::getWindowsDiskType(const QString& drive) const
         }
     }
 
-    // ---------------------------
-    // 4. Очистка та результат
-    // ---------------------------
     pLoc->Release();
     CoUninitialize();
 
@@ -848,9 +819,8 @@ QString HardwareInfoProvider::getWindowsDiskType(const QString& drive) const
 }
 #endif
 
-
 // ========================================
-// Інформація про диски - Linux (через lsblk)
+// Інформація про диски - Linux
 // ========================================
 
 #ifdef __linux__
@@ -865,7 +835,7 @@ QString HardwareInfoProvider::getLinuxDiskType(const QString& device) const
         return cache[devName];
     }
 
-    devName.replace(QRegularExpression("\\d+$"), ""); // видаляємо номер партиції
+    devName.replace(QRegularExpression("\\d+$"), "");
 
     qDebug() << "[DEBUG] Перевіряємо диск:" << devName;
 
@@ -923,47 +893,43 @@ QString HardwareInfoProvider::getLinuxDiskType(const QString& device) const
 // Інформація про диски - Загальні методи
 // ========================================
 
-QList<DiskInfo> HardwareInfoProvider::getDisks() const
+QList<DiskInfoQt> HardwareInfoProvider::getDisks() const
 {
-    QList<DiskInfo> disks;
-    
+    QList<DiskInfoQt> disks;
+
     QList<QStorageInfo> volumes = QStorageInfo::mountedVolumes();
-    
-    for (const QStorageInfo &storage : volumes) {
-        // Пропускаємо системні та віртуальні диски
+
+    for (const QStorageInfo& storage : volumes) {
         if (!storage.isValid() || storage.isReadOnly()) {
             continue;
         }
-        
+
 #ifdef __linux__
-        // На Linux пропускаємо snap, tmpfs, devtmpfs тощо
         QString fsType = QString::fromLatin1(storage.fileSystemType());
-        if (fsType == "tmpfs" || fsType == "devtmpfs" || 
+        if (fsType == "tmpfs" || fsType == "devtmpfs" ||
             fsType == "squashfs" || fsType == "overlay") {
             continue;
         }
-        
-        // Пропускаємо /boot, /boot/efi тощо (малі системні партиції)
+
         QString mount = storage.rootPath();
-        if (mount.startsWith("/boot") || mount.startsWith("/sys") || 
+        if (mount.startsWith("/boot") || mount.startsWith("/sys") ||
             mount.startsWith("/proc") || mount.startsWith("/dev") ||
             mount.startsWith("/run")) {
             continue;
         }
 #endif
-        
-        DiskInfo info;
+
+        DiskInfoQt info;
         info.mountPoint = storage.rootPath();
         info.fileSystem = QString::fromLatin1(storage.fileSystemType());
         info.totalBytes = storage.bytesTotal();
         info.freeBytes = storage.bytesFree();
         info.usedBytes = info.totalBytes - info.freeBytes;
-        
+
         if (info.totalBytes > 0) {
             info.usagePercent = (info.usedBytes * 100.0) / info.totalBytes;
         }
-        
-        // Визначаємо тип диску (SSD/HDD)
+
 #ifdef _WIN32
         info.type = getWindowsDiskType(info.mountPoint);
 #elif defined(__linux__)
@@ -971,49 +937,49 @@ QList<DiskInfo> HardwareInfoProvider::getDisks() const
 #else
         info.type = "Unknown";
 #endif
-        
-        // Модель (спрощено - можна розширити через WMI на Windows)
-        info.model = ""; // Поки що залишаємо пустим
-        
+
+        info.diskType = stringToDiskType(info.type);
+        info.model = "";
+
         disks.append(info);
     }
-    
+
     return disks;
 }
 
 quint64 HardwareInfoProvider::getTotalDiskSpace() const
 {
     quint64 total = 0;
-    QList<DiskInfo> disks = getDisks();
-    
-    for (const DiskInfo &disk : disks) {
+    QList<DiskInfoQt> disks = getDisks();
+
+    for (const DiskInfoQt& disk : disks) {
         total += disk.totalBytes;
     }
-    
+
     return total;
 }
 
 quint64 HardwareInfoProvider::getUsedDiskSpace() const
 {
     quint64 used = 0;
-    QList<DiskInfo> disks = getDisks();
-    
-    for (const DiskInfo &disk : disks) {
+    QList<DiskInfoQt> disks = getDisks();
+
+    for (const DiskInfoQt& disk : disks) {
         used += disk.usedBytes;
     }
-    
+
     return used;
 }
 
 quint64 HardwareInfoProvider::getFreeDiskSpace() const
 {
     quint64 free = 0;
-    QList<DiskInfo> disks = getDisks();
-    
-    for (const DiskInfo &disk : disks) {
+    QList<DiskInfoQt> disks = getDisks();
+
+    for (const DiskInfoQt& disk : disks) {
         free += disk.freeBytes;
     }
-    
+
     return free;
 }
 
@@ -1021,7 +987,7 @@ double HardwareInfoProvider::getDiskUsagePercent() const
 {
     quint64 total = getTotalDiskSpace();
     if (total == 0) return 0.0;
-    
+
     quint64 used = getUsedDiskSpace();
     return (used * 100.0) / total;
 }
@@ -1033,37 +999,38 @@ double HardwareInfoProvider::getDiskUsagePercent() const
 QString HardwareInfoProvider::formatBytes(quint64 bytes) const
 {
     if (bytes == 0) return "0 B";
-    
-    const char* units[] = {"B", "KB", "MB", "GB", "TB"};
+
+    const char* units[] = { "B", "KB", "MB", "GB", "TB" };
     int unitIndex = 0;
     double size = static_cast<double>(bytes);
-    
+
     while (size >= 1024.0 && unitIndex < 4) {
         size /= 1024.0;
         unitIndex++;
     }
-    
+
     return QString::number(size, 'f', 2) + " " + units[unitIndex];
 }
 
+// Продовження у наступному повідомленні (частина 3)...
 // ========================================
-// Отримання всієї інформації
+// Отримання всієї інформації (старий метод)
 // ========================================
 
 QString HardwareInfoProvider::getAllSystemInfo() const
 {
     QString info;
-    
+
     info += "=== Системна інформація ===\n\n";
-    
+
     info += "Платформа: " + getPlatformName() + "\n\n";
-    
+
     // ОС
     info += "Операційна система:\n";
     info += "  Назва: " + getOSInfo() + "\n";
     info += "  Ядро: " + getKernelVersion() + "\n";
     info += "  Архітектура: " + getArchitecture() + "\n\n";
-    
+
     // CPU
     info += "Процесор:\n";
     info += "  Модель: " + getCPUName() + "\n";
@@ -1073,11 +1040,12 @@ QString HardwareInfoProvider::getAllSystemInfo() const
         info += QString("  Частота: %1 MHz (%2 GHz)\n")
             .arg(cpuFreq)
             .arg(QString::number(getCPUFrequencyGHz(), 'f', 2));
-    } else {
+    }
+    else {
         info += "  Частота: Недоступно\n";
     }
     info += "\n";
-    
+
     // RAM
     quint64 totalRAM = getTotalRAM();
     if (totalRAM > 0) {
@@ -1087,55 +1055,56 @@ QString HardwareInfoProvider::getAllSystemInfo() const
         info += "  Використано: " + formatBytes(getUsedRAM()) + "\n";
         info += QString("  Використання: %1%\n")
             .arg(QString::number(getRAMUsagePercent(), 'f', 1));
-    } else {
+    }
+    else {
         info += "Оперативна пам'ять: Недоступно\n";
     }
     info += "\n";
-    
+
     // GPU
     info += "Відеокарта:\n";
     info += "  Назва: " + getGPUName() + "\n";
-    
+
     quint64 totalVRAM = getGPUMemoryMB();
     quint64 usedVRAM = getGPUUsedMemoryMB();
     quint64 freeVRAM = getGPUFreeMemoryMB();
-    
+
     if (totalVRAM > 0) {
         info += QString("  VRAM Загальна: %1 MB (%2 GB)\n")
             .arg(totalVRAM)
             .arg(QString::number(totalVRAM / 1024.0, 'f', 2));
-        
+
         if (usedVRAM > 0) {
             info += QString("  VRAM Використано: %1 MB (%2 GB)\n")
                 .arg(usedVRAM)
                 .arg(QString::number(usedVRAM / 1024.0, 'f', 2));
         }
-        
+
         if (freeVRAM > 0) {
             info += QString("  VRAM Вільно: %1 MB (%2 GB)\n")
                 .arg(freeVRAM)
                 .arg(QString::number(freeVRAM / 1024.0, 'f', 2));
         }
-        
+
         if (usedVRAM > 0) {
             info += QString("  VRAM Використання: %1%\n")
                 .arg(QString::number(getGPUMemoryUsagePercent(), 'f', 1));
         }
     }
     info += "\n";
-    
+
     // Диски
-    QList<DiskInfo> disks = getDisks();
+    QList<DiskInfoQt> disks = getDisks();
     if (!disks.isEmpty()) {
         info += "Диски:\n";
-        
-        for (const DiskInfo &disk : disks) {
+
+        for (const DiskInfoQt& disk : disks) {
             info += QString("  %1 (%2)\n").arg(disk.mountPoint, disk.fileSystem);
-            
+
             if (!disk.type.isEmpty() && disk.type != "Unknown") {
                 info += QString("    Тип: %1\n").arg(disk.type);
             }
-            
+
             info += QString("    Розмір: %1\n").arg(formatBytes(disk.totalBytes));
             info += QString("    Вільно: %1 (%2%)\n")
                 .arg(formatBytes(disk.freeBytes))
@@ -1144,7 +1113,7 @@ QString HardwareInfoProvider::getAllSystemInfo() const
                 .arg(formatBytes(disk.usedBytes))
                 .arg(QString::number(disk.usagePercent, 'f', 1));
         }
-        
+
         info += "\n";
         info += "  Всього на дисках:\n";
         info += QString("    Загальний розмір: %1\n").arg(formatBytes(getTotalDiskSpace()));
@@ -1154,8 +1123,413 @@ QString HardwareInfoProvider::getAllSystemInfo() const
             .arg(QString::number(getDiskUsagePercent(), 'f', 1));
     }
     info += "\n";
-    
+
     info += "===========================";
-    
+
     return info;
+}
+
+// ========================================
+// 🆕 НОВІ МЕТОДИ
+// ========================================
+
+// Конвертація DiskType
+DiskType HardwareInfoProvider::stringToDiskType(const QString& typeStr)
+{
+    QString type = typeStr.toLower();
+
+    if (type == "ssd") return DiskType::SSD;
+    if (type == "hdd") return DiskType::HDD;
+    if (type == "external") return DiskType::External;
+    if (type == "removable") return DiskType::Removable;
+
+    return DiskType::Unknown;
+}
+
+QString HardwareInfoProvider::diskTypeToString(DiskType type)
+{
+    switch (type) {
+    case DiskType::SSD: return "SSD";
+    case DiskType::HDD: return "HDD";
+    case DiskType::External: return "External";
+    case DiskType::Removable: return "Removable";
+    default: return "Unknown";
+    }
+}
+
+std::string HardwareInfoProvider::diskTypeToStdString(DiskType type)
+{
+    return diskTypeToString(type).toStdString();
+}
+
+// Форматування MB в GB
+std::string HardwareInfoProvider::formatBytesMB(uint64_t mb)
+{
+    if (mb == 0) return "0 MB";
+
+    if (mb < 1024) {
+        return std::to_string(mb) + " MB";
+    }
+
+    double gb = mb / 1024.0;
+    char buffer[64];
+    snprintf(buffer, sizeof(buffer), "%.2f GB", gb);
+    return std::string(buffer);
+}
+
+// ========================================
+// Список GPU - Windows
+// ========================================
+
+#ifdef _WIN32
+std::vector<GPUInfo> HardwareInfoProvider::getWindowsGPUList() const
+{
+    std::vector<GPUInfo> gpuList;
+
+    IDXGIFactory* pFactory = nullptr;
+    if (FAILED(CreateDXGIFactory(__uuidof(IDXGIFactory), (void**)(&pFactory)))) {
+        return gpuList;
+    }
+
+    QSet<QString> seenAdapters;
+    UINT i = 0;
+    IDXGIAdapter* pAdapter = nullptr;
+
+    while (pFactory->EnumAdapters(i, &pAdapter) != DXGI_ERROR_NOT_FOUND) {
+        DXGI_ADAPTER_DESC desc;
+        if (SUCCEEDED(pAdapter->GetDesc(&desc))) {
+            QString gpuName = QString::fromWCharArray(desc.Description).trimmed();
+            QString gpuKey = QString("%1_%2_%3")
+                .arg(desc.VendorId)
+                .arg(desc.DeviceId)
+                .arg(gpuName);
+
+            if (!seenAdapters.contains(gpuKey)) {
+                seenAdapters.insert(gpuKey);
+
+                GPUInfo gpu;
+                gpu.model = gpuName.toStdString();
+
+                SIZE_T vramBytes = desc.DedicatedVideoMemory;
+                if (vramBytes > 0) {
+                    gpu.vram_mb = vramBytes / (1024 * 1024);
+                }
+
+                // VRAM usage через DXGI 1.4
+#if defined(NTDDI_WIN10) || defined(_WIN32_WINNT_WIN10)
+                typedef HRESULT(WINAPI* PFN_CREATE_DXGI_FACTORY1)(REFIID, void**);
+                HMODULE hDxgi = LoadLibraryA("dxgi.dll");
+
+                if (hDxgi) {
+                    PFN_CREATE_DXGI_FACTORY1 pCreateDXGIFactory1 =
+                        (PFN_CREATE_DXGI_FACTORY1)GetProcAddress(hDxgi, "CreateDXGIFactory1");
+
+                    if (pCreateDXGIFactory1) {
+                        IDXGIFactory1* pFactory1 = nullptr;
+                        HRESULT hr = pCreateDXGIFactory1(__uuidof(IDXGIFactory1), (void**)&pFactory1);
+
+                        if (SUCCEEDED(hr) && pFactory1) {
+                            IDXGIFactory4* pFactory4 = nullptr;
+                            hr = pFactory1->QueryInterface(__uuidof(IDXGIFactory4), (void**)&pFactory4);
+
+                            if (SUCCEEDED(hr) && pFactory4) {
+                                IDXGIAdapter3* pAdapter3 = nullptr;
+                                if (pFactory4->EnumAdapters(i, (IDXGIAdapter**)&pAdapter3) != DXGI_ERROR_NOT_FOUND) {
+                                    DXGI_QUERY_VIDEO_MEMORY_INFO memoryInfo;
+                                    if (SUCCEEDED(pAdapter3->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &memoryInfo))) {
+                                        gpu.vram_used_mb = memoryInfo.CurrentUsage / 1024 / 1024;
+                                        gpu.vram_free_mb = (memoryInfo.Budget - memoryInfo.CurrentUsage) / 1024 / 1024;
+
+                                        if (gpu.vram_mb.has_value() && gpu.vram_mb.value() > 0) {
+                                            gpu.vram_usage_percent = (gpu.vram_used_mb.value() * 100.0) / gpu.vram_mb.value();
+                                        }
+                                    }
+                                    pAdapter3->Release();
+                                }
+                                pFactory4->Release();
+                            }
+                            pFactory1->Release();
+                        }
+                    }
+                    FreeLibrary(hDxgi);
+                }
+#endif
+
+                gpuList.push_back(gpu);
+            }
+        }
+        pAdapter->Release();
+        ++i;
+    }
+
+    pFactory->Release();
+    return gpuList;
+}
+#endif
+
+// ========================================
+// Список GPU - Linux
+// ========================================
+
+#ifdef __linux__
+std::vector<GPUInfo> HardwareInfoProvider::getLinuxGPUList() const
+{
+    std::vector<GPUInfo> gpuList;
+
+    QProcess process;
+    process.start("lspci", QStringList() << "-v");
+
+    if (!process.waitForFinished(3000)) {
+        return gpuList;
+    }
+
+    QString output = process.readAllStandardOutput();
+    QStringList lines = output.split('\n');
+
+    for (int i = 0; i < lines.size(); ++i) {
+        QString line = lines[i];
+        if (line.contains("VGA compatible controller:", Qt::CaseInsensitive) ||
+            line.contains("3D controller:", Qt::CaseInsensitive)) {
+
+            int colonPos = line.lastIndexOf(':');
+            if (colonPos > 0) {
+                GPUInfo gpu;
+                gpu.model = line.mid(colonPos + 1).trimmed().toStdString();
+
+                QProcess nvidiaProcess;
+                nvidiaProcess.start("nvidia-smi", QStringList()
+                    << "--query-gpu=memory.total,memory.used,memory.free"
+                    << "--format=csv,noheader,nounits");
+
+                if (nvidiaProcess.waitForFinished(2000)) {
+                    QString nvidiaOutput = nvidiaProcess.readAllStandardOutput().trimmed();
+                    QStringList parts = nvidiaOutput.split(',');
+                    if (parts.size() >= 3) {
+                        bool ok;
+                        uint64_t total = parts[0].trimmed().toULongLong(&ok);
+                        if (ok) gpu.vram_mb = total;
+
+                        uint64_t used = parts[1].trimmed().toULongLong(&ok);
+                        if (ok) gpu.vram_used_mb = used;
+
+                        uint64_t free = parts[2].trimmed().toULongLong(&ok);
+                        if (ok) gpu.vram_free_mb = free;
+
+                        if (gpu.vram_mb.has_value() && gpu.vram_mb.value() > 0) {
+                            gpu.vram_usage_percent = (gpu.vram_used_mb.value() * 100.0) / gpu.vram_mb.value();
+                        }
+                    }
+                }
+
+                gpuList.push_back(gpu);
+            }
+        }
+    }
+
+    return gpuList;
+}
+#endif
+
+// Публічний метод getGPUList
+std::vector<GPUInfo> HardwareInfoProvider::getGPUList() const
+{
+#ifdef _WIN32
+    return getWindowsGPUList();
+#elif defined(__linux__)
+    return getLinuxGPUList();
+#else
+    return std::vector<GPUInfo>();
+#endif
+}
+
+// Продовжується... ЧАСТИНА 4 (фінал)
+// ========================================
+// ГОЛОВНИЙ МЕТОД - getDeviceInfo()
+// ========================================
+
+ArgentumDevice HardwareInfoProvider::getDeviceInfo() const
+{
+    ArgentumDevice device;
+
+    // ========== OS ==========
+    device.os = getOSInfo().toStdString();
+    device.os_kernel = getKernelVersion().toStdString();
+    device.os_arch = getArchitecture().toStdString();
+    device.platform = getPlatformName().toStdString();
+
+    // ========== CPU ==========
+    device.cpu_model = getCPUName().toStdString();
+    device.cpu_cores = static_cast<uint32_t>(getCPUCores());
+
+    int cpuFreqMHz = getCPUFrequencyMHz();
+    if (cpuFreqMHz > 0) {
+        device.cpu_frequency_mhz = static_cast<uint32_t>(cpuFreqMHz);
+    }
+
+    // ========== RAM ==========
+    quint64 totalRAM = getTotalRAM();
+    quint64 availableRAM = getAvailableRAM();
+    quint64 usedRAM = getUsedRAM();
+
+    device.ram_mb = totalRAM / 1024 / 1024;
+    device.ram_available_mb = availableRAM / 1024 / 1024;
+    device.ram_used_mb = usedRAM / 1024 / 1024;
+    device.ram_usage_percent = getRAMUsagePercent();
+
+    // ========== GPU ==========
+    std::vector<GPUInfo> gpuList = getGPUList();
+    device.gpus = gpuList;
+    device.gpu_count = static_cast<uint32_t>(gpuList.size());
+
+    // ========== Диски ==========
+    QList<DiskInfoQt> qDisks = getDisks();
+
+    for (const DiskInfoQt& qDisk : qDisks) {
+        DiskInfo disk;
+        disk.mount_point = qDisk.mountPoint.toStdString();
+        disk.filesystem = qDisk.fileSystem.toStdString();
+        disk.type = qDisk.diskType;
+        disk.total_mb = qDisk.totalBytes / 1024 / 1024;
+        disk.free_mb = qDisk.freeBytes / 1024 / 1024;
+        disk.used_mb = qDisk.usedBytes / 1024 / 1024;
+        disk.usage_percent = qDisk.usagePercent;
+        disk.free_percent = 100.0 - qDisk.usagePercent;
+
+        device.disks.push_back(disk);
+
+        // Визначаємо primary disk (C:\ на Windows, / на Linux)
+#ifdef _WIN32
+        QString mountUpper = qDisk.mountPoint.toUpper();
+        if (mountUpper == "C:\\" || mountUpper == "C:/") {
+            device.primary_disk_type = qDisk.diskType;
+        }
+#else
+        if (qDisk.mountPoint == "/") {
+            device.primary_disk_type = qDisk.diskType;
+        }
+#endif
+    }
+
+    // Підсумок по дискам
+    quint64 totalDisk = getTotalDiskSpace();
+    quint64 freeDisk = getFreeDiskSpace();
+    quint64 usedDisk = getUsedDiskSpace();
+
+    device.total_disk_mb = totalDisk / 1024 / 1024;
+    device.free_disk_mb = freeDisk / 1024 / 1024;
+    device.used_disk_mb = usedDisk / 1024 / 1024;
+    device.disk_usage_percent = getDiskUsagePercent();
+
+    return device;
+}
+
+// ========================================
+// Вивід ArgentumDevice у консоль
+// ========================================
+
+void HardwareInfoProvider::printDeviceInfo(const ArgentumDevice& device)
+{
+    std::cout << "\n=== ArgentumDevice Structure ===" << std::endl;
+    std::cout << std::endl;
+
+    // OS
+    std::cout << "Platform: " << device.platform.value_or("Unknown") << std::endl;
+    std::cout << std::endl;
+
+    std::cout << "OS:" << std::endl;
+    std::cout << "  Name: " << device.os << std::endl;
+    std::cout << "  Kernel: " << device.os_kernel.value_or("Unknown") << std::endl;
+    std::cout << "  Architecture: " << device.os_arch.value_or("Unknown") << std::endl;
+    std::cout << std::endl;
+
+    // CPU
+    std::cout << "CPU:" << std::endl;
+    std::cout << "  Model: " << device.cpu_model.value_or("Unknown") << std::endl;
+    std::cout << "  Cores: " << device.cpu_cores << std::endl;
+    if (device.cpu_frequency_mhz.has_value()) {
+        std::cout << "  Frequency: " << device.cpu_frequency_mhz.value() << " MHz ("
+            << std::fixed << std::setprecision(2)
+            << (device.cpu_frequency_mhz.value() / 1000.0) << " GHz)" << std::endl;
+    }
+    std::cout << std::endl;
+
+    // RAM
+    std::cout << "RAM:" << std::endl;
+    std::cout << "  Total: " << formatBytesMB(device.ram_mb) << std::endl;
+    if (device.ram_available_mb.has_value()) {
+        std::cout << "  Available: " << formatBytesMB(device.ram_available_mb.value()) << std::endl;
+    }
+    if (device.ram_used_mb.has_value()) {
+        std::cout << "  Used: " << formatBytesMB(device.ram_used_mb.value()) << std::endl;
+    }
+    if (device.ram_usage_percent.has_value()) {
+        std::cout << "  Usage: " << std::fixed << std::setprecision(1)
+            << device.ram_usage_percent.value() << "%" << std::endl;
+    }
+    std::cout << std::endl;
+
+    // GPU
+    std::cout << "GPU:" << std::endl;
+    if (device.gpu_count.has_value()) {
+        std::cout << "  Count: " << device.gpu_count.value() << std::endl;
+    }
+    std::cout << std::endl;
+
+    for (size_t i = 0; i < device.gpus.size(); i++) {
+        const GPUInfo& gpu = device.gpus[i];
+        std::cout << "  GPU " << (i + 1) << ": " << gpu.model << std::endl;
+
+        if (gpu.vram_mb.has_value()) {
+            std::cout << "    VRAM Total: " << gpu.vram_mb.value() << " MB ("
+                << formatBytesMB(gpu.vram_mb.value()) << ")" << std::endl;
+        }
+        if (gpu.vram_used_mb.has_value()) {
+            std::cout << "    VRAM Used: " << gpu.vram_used_mb.value() << " MB ("
+                << formatBytesMB(gpu.vram_used_mb.value()) << ")" << std::endl;
+        }
+        if (gpu.vram_free_mb.has_value()) {
+            std::cout << "    VRAM Free: " << gpu.vram_free_mb.value() << " MB ("
+                << formatBytesMB(gpu.vram_free_mb.value()) << ")" << std::endl;
+        }
+        if (gpu.vram_usage_percent.has_value()) {
+            std::cout << "    Usage: " << std::fixed << std::setprecision(1)
+                << gpu.vram_usage_percent.value() << "%" << std::endl;
+        }
+        std::cout << std::endl;
+    }
+
+    // Диски
+    std::cout << "Disks:" << std::endl;
+    for (const DiskInfo& disk : device.disks) {
+        std::cout << "  " << disk.mount_point << " (" << disk.filesystem << ")" << std::endl;
+        std::cout << "    Type: " << diskTypeToStdString(disk.type) << std::endl;
+        std::cout << "    Size: " << formatBytesMB(disk.total_mb) << std::endl;
+        std::cout << "    Free: " << formatBytesMB(disk.free_mb)
+            << " (" << std::fixed << std::setprecision(1) << disk.free_percent << "%)" << std::endl;
+        std::cout << "    Used: " << formatBytesMB(disk.used_mb)
+            << " (" << std::fixed << std::setprecision(1) << disk.usage_percent << "%)" << std::endl;
+        std::cout << std::endl;
+    }
+
+    // Підсумок по дискам
+    std::cout << "Total Disks:" << std::endl;
+    if (device.total_disk_mb.has_value()) {
+        std::cout << "  Total Size: " << formatBytesMB(device.total_disk_mb.value()) << std::endl;
+    }
+    if (device.free_disk_mb.has_value()) {
+        std::cout << "  Free: " << formatBytesMB(device.free_disk_mb.value()) << std::endl;
+    }
+    if (device.used_disk_mb.has_value()) {
+        std::cout << "  Used: " << formatBytesMB(device.used_disk_mb.value());
+        if (device.disk_usage_percent.has_value()) {
+            std::cout << " (" << std::fixed << std::setprecision(1)
+                << device.disk_usage_percent.value() << "%)";
+        }
+        std::cout << std::endl;
+    }
+    std::cout << std::endl;
+
+    std::cout << "Primary Disk Type: " << diskTypeToStdString(device.primary_disk_type) << std::endl;
+    std::cout << std::endl;
+    std::cout << "===================================" << std::endl;
 }

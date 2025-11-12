@@ -1,0 +1,85 @@
+{
+	"backtrace" : 9,
+	"backtraceGraph" : 
+	{
+		"commands" : 
+		[
+			"add_custom_target",
+			"_qt_internal_create_global_android_targets_impl",
+			"_qt_internal_create_global_android_targets",
+			"include",
+			"find_package"
+		],
+		"files" : 
+		[
+			"C:/Qt/6.9.3/android_arm64_v8a/lib/cmake/Qt6Core/Qt6AndroidMacros.cmake",
+			"C:/Qt/6.9.3/android_arm64_v8a/lib/cmake/Qt6Core/Qt6CoreConfigExtras.cmake",
+			"C:/Qt/6.9.3/android_arm64_v8a/lib/cmake/Qt6Core/Qt6CoreConfig.cmake",
+			"C:/Qt/6.9.3/android_arm64_v8a/lib/cmake/Qt6/Qt6Config.cmake",
+			"CMakeLists.txt"
+		],
+		"nodes" : 
+		[
+			{
+				"file" : 4
+			},
+			{
+				"command" : 4,
+				"file" : 4,
+				"line" : 8,
+				"parent" : 0
+			},
+			{
+				"file" : 3,
+				"parent" : 1
+			},
+			{
+				"command" : 4,
+				"file" : 3,
+				"line" : 235,
+				"parent" : 2
+			},
+			{
+				"file" : 2,
+				"parent" : 3
+			},
+			{
+				"command" : 3,
+				"file" : 2,
+				"line" : 199,
+				"parent" : 4
+			},
+			{
+				"file" : 1,
+				"parent" : 5
+			},
+			{
+				"command" : 2,
+				"file" : 1,
+				"line" : 35,
+				"parent" : 6
+			},
+			{
+				"command" : 1,
+				"file" : 0,
+				"line" : 844,
+				"parent" : 7
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 826,
+				"parent" : 8
+			}
+		]
+	},
+	"id" : "aar::@6890427a1f51a3e7e1df",
+	"name" : "aar",
+	"paths" : 
+	{
+		"build" : ".",
+		"source" : "."
+	},
+	"sources" : [],
+	"type" : "UTILITY"
+}
