@@ -828,66 +828,65 @@ QString HardwareInfoProvider::getLinuxDiskType(const QString& device) const
 {
     QString devName = device;
     devName.remove("/dev/");
-
-    static QMap<QString, QString> cache;
-    if (cache.contains(devName)) {
-        qDebug() << "[DEBUG] Використано кешований тип диску для" << devName << ":" << cache[devName];
-        return cache[devName];
-    }
-
     devName.replace(QRegularExpression("\\d+$"), "");
 
-    qDebug() << "[DEBUG] Перевіряємо диск:" << devName;
+    static QMap<QString, QString> cache;
+    if (cache.contains(devName))
+        return cache[devName];
 
     QProcess process;
     process.start("lsblk", { "-d", "-o", "NAME,ROTA,TRAN,TYPE,MODEL" });
-    if (!process.waitForFinished(1500)) {
-        qDebug() << "[DEBUG] lsblk не відповідає";
+    if (!process.waitForFinished(1500))
         return "Unknown";
-    }
 
     QString output = process.readAllStandardOutput();
     QStringList lines = output.split('\n', Qt::SkipEmptyParts);
 
     QString diskType = "Unknown";
-
     for (const QString& line : lines) {
-        if (line.startsWith(devName)) {
-            QStringList parts = line.simplified().split(' ');
-            if (parts.size() < 5) continue;
+        QString trimmed = line.trimmed();
+        if (!trimmed.startsWith(devName + " "))
+            continue;
 
-            QString name = parts.at(0);
-            QString rota = parts.at(1);
-            QString tran = parts.at(2).toLower();
-            QString type = parts.at(3).toLower();
-            QString model = parts.mid(4).join(' ');
+        QStringList parts = trimmed.simplified().split(' ');
+        if (parts.size() < 2) continue;
 
-            qDebug() << "[DEBUG] lsblk знайдено:" << name << "| ROTA:" << rota << "| TRAN:" << tran << "| TYPE:" << type << "| MODEL:" << model;
+        QString name = parts.value(0);
+        QString rota = parts.value(1);
+        QString tran = parts.value(2).toLower();
+        QString type = parts.value(3).toLower();
+        QString model = parts.mid(4).join(' ');
 
-            if (type == "rom" || type == "loop") {
-                diskType = "Removable";
-            }
-            else if (tran.contains("usb") || tran.contains("thunderbolt")) {
-                diskType = "External";
-            }
-            else if (rota == "0") {
-                diskType = "SSD";
-            }
-            else if (rota == "1") {
-                diskType = "HDD";
-            }
+        if (name.startsWith("nvme"))
+            diskType = "SSD";
+        else if (type == "rom" || type == "loop")
+            diskType = "Removable";
+        else if (tran.contains("usb") || tran.contains("thunderbolt"))
+            diskType = "External";
+        else if (rota == "0")
+            diskType = "SSD";
+        else if (rota == "1")
+            diskType = "HDD";
 
-            if (diskType != "Unknown") break;
+        if (diskType != "Unknown")
+            break;
+    }
+
+    // fallback через /sys/block
+    if (diskType == "Unknown") {
+        QFile f("/sys/block/" + devName + "/queue/rotational");
+        if (f.open(QIODevice::ReadOnly)) {
+            QByteArray data = f.readAll().trimmed();
+            if (data == "0") diskType = "SSD";
+            else if (data == "1") diskType = "HDD";
         }
     }
 
-    qDebug() << "[DEBUG] Фінальний тип диску для" << devName << ":" << diskType;
-
     cache[devName] = diskType;
-
     return diskType;
 }
 #endif
+
 
 // ========================================
 // Інформація про диски - Загальні методи
