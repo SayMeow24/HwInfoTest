@@ -10,7 +10,7 @@ int main(int argc, char* argv[])
 
     std::cout << "\n";
     std::cout << "=====================================" << std::endl;
-    std::cout << "  Hardware Info Provider v4.0" << std::endl;
+    std::cout << "  Hardware Info Provider v4.1" << std::endl;
     std::cout << "  ArgentumDevice Structure Demo" << std::endl;
     std::cout << "=====================================" << std::endl;
     std::cout << "\n";
