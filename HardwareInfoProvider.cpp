@@ -30,17 +30,7 @@
 #include <QProcess>
 #include <QDir>
 #include <QRegularExpression>
-
-std::string getDiskTypeLinux(const std::string& deviceName) {
-    if (deviceName.rfind("nvme", 0) == 0)
-        return "SSD";
-    std::string path = "/sys/block/" + deviceName + "/queue/rotational";
-    std::ifstream file(path);
-    if (!file.is_open()) return "Unknown";
-    int val = 1;
-    file >> val;
-    return (val == 0) ? "SSD" : "HDD";
-}
+#include <fstream>
 #endif
 
 // ========================================
