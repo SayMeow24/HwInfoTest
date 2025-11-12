@@ -11,7 +11,9 @@ find_package(Qt6 REQUIRED COMPONENTS Core)
 add_executable(hwinfo
     main.cpp
     HardwareInfoProvider.cpp
+    SystemScorer.cpp          # <— додай цю лінію
     HardwareInfoProvider.h
+    SystemScorer.h            # <— і цю теж бажано
 )
 
 # Лінкування з Qt
