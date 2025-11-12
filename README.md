@@ -3,7 +3,7 @@
 Detects CPU, GPU, RAM, Disks, and OS data on **Windows** and **Linux**.
 
 ![C++](https://img.shields.io/badge/C%2B%2B-17-blue) ![Qt](https://img.shields.io/badge/Qt-6-green) ![OS](https://img.shields.io/badge/Platforms-Windows%20%7C%20Linux-lightgrey)  
-📦 *Version 2.2 — GPU deduplication, LSBLK caching & Qt integration example.*
+📦 *Version 4.2 — GPU deduplication, LSBLK caching & Qt integration example + Ubuntu disc type fix.*
 
 ---
 
