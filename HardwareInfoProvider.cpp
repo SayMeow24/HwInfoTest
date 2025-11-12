@@ -30,6 +30,17 @@
 #include <QProcess>
 #include <QDir>
 #include <QRegularExpression>
+
+std::string getDiskTypeLinux(const std::string& deviceName) {
+    if (deviceName.rfind("nvme", 0) == 0)
+        return "SSD";
+    std::string path = "/sys/block/" + deviceName + "/queue/rotational";
+    std::ifstream file(path);
+    if (!file.is_open()) return "Unknown";
+    int val = 1;
+    file >> val;
+    return (val == 0) ? "SSD" : "HDD";
+}
 #endif
 
 // ========================================
@@ -824,6 +835,23 @@ QString HardwareInfoProvider::getWindowsDiskType(const QString& drive) const
 // ========================================
 
 #ifdef __linux__
+
+std::string getDiskTypeLinux(const std::string& deviceName)
+{
+    // Якщо NVMe — одразу SSD
+    if (deviceName.rfind("nvme", 0) == 0)
+        return "SSD";
+
+    std::string path = "/sys/block/" + deviceName + "/queue/rotational";
+    std::ifstream file(path);
+    if (!file.is_open())
+        return "Unknown";
+
+    int val = 1;
+    file >> val;
+    return (val == 0) ? "SSD" : "HDD";
+}
+
 QString HardwareInfoProvider::getLinuxDiskType(const QString& device) const
 {
     QString devName = device;
@@ -872,14 +900,9 @@ QString HardwareInfoProvider::getLinuxDiskType(const QString& device) const
             break;
     }
 
-    // fallback через /sys/block
+    // 🆕 fallback через нову функцію
     if (diskType == "Unknown") {
-        QFile f("/sys/block/" + devName + "/queue/rotational");
-        if (f.open(QIODevice::ReadOnly)) {
-            QByteArray data = f.readAll().trimmed();
-            if (data == "0") diskType = "SSD";
-            else if (data == "1") diskType = "HDD";
-        }
+        diskType = QString::fromStdString(getDiskTypeLinux(devName.toStdString()));
     }
 
     cache[devName] = diskType;
