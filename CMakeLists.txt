@@ -1,33 +1,21 @@
 cmake_minimum_required(VERSION 3.16)
-project(hwinfo VERSION 2.0 LANGUAGES CXX)
+
+project(hwinfo_console VERSION 1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Знайти Qt
-find_package(Qt6 REQUIRED COMPONENTS Core)
-
-# Створити виконуваний файл
-add_executable(hwinfo
+add_executable(hwinfo_console
     main.cpp
     HardwareInfoProvider.cpp
     HardwareInfoProvider.h
 )
 
-# Лінкування з Qt
-target_link_libraries(hwinfo
-    Qt6::Core
-)
-
-# Windows-specific libraries
-if(WIN32)
-    target_link_libraries(hwinfo
+if (WIN32)
+    # WMI / COM / DXGI
+    target_link_libraries(hwinfo_console PRIVATE
         dxgi
         wbemuuid
+        ole32
     )
 endif()
-
-# Встановлення
-install(TARGETS hwinfo
-    RUNTIME DESTINATION bin
-)
