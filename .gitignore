@@ -1,0 +1,130 @@
+##############################
+#   C++ / CMake HWINFO APP   #
+##############################
+
+# ============================
+# Build artifacts (CMake)
+# ============================
+build/
+build*/
+*/build/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+install_manifest.txt
+CTestTestfile.cmake
+
+# Ninja
+.ninja_deps
+.ninja_log
+*.ninja
+
+# ============================
+# Compiler output
+# ============================
+*.o
+*.obj
+*.lo
+*.la
+*.a
+*.lib
+*.so
+*.dll
+*.dylib
+*.exp
+*.pdb
+*.ilk
+
+# ============================
+# Executables
+# ============================
+*.exe
+*.out
+*.app
+hwinfo
+hwinfo_ui
+hwinfo_console
+
+# ============================
+# Qt / qmake trash
+# ============================
+*.pro
+*.pro.user
+*.pro.user.*
+*.qbs
+*.qrc.dep
+*.qmlc
+*.jsc
+/.qtc/
+/.qtc_clangd/
+*.qtc
+*.qtds
+*.moc
+moc_*.cpp
+ui_*.h
+*.autosave
+
+# Qt Creator specific
+*.creator
+*.creator.user
+*.creator.user.*
+*.files
+*.includes
+
+# ============================
+# OS-generated files
+# ============================
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Linux
+*~
+
+# ============================
+# Logs / Temp
+# ============================
+*.log
+*.tmp
+*.swp
+*.swo
+*.bak
+*.cache
+.cache/
+logs/
+log/
+
+# ============================
+# IDE support
+# ============================
+
+# Visual Studio
+.vscode/
+.vs/
+*.vcxproj*
+*.sln
+*.user
+*.filters
+
+# JetBrains CLion
+.idea/
+*.iml
+
+# ============================
+# Generated documentation
+# ============================
+*.html
+*.pdf
+*.dox
+.doxygen/
+
+##############################
+# END
+##############################
