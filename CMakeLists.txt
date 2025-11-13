@@ -25,7 +25,9 @@ qt_add_executable(hwinfo_ui
     MainWindow.cpp
     MainWindow.h
     HardwareInfoProvider.cpp
+    SystemScorer.cpp          # <— додай цю лінію
     HardwareInfoProvider.h
+    SystemScorer.h            # <— і цю теж бажано
 )
 
 # Лінкуємо Qt-модулі
