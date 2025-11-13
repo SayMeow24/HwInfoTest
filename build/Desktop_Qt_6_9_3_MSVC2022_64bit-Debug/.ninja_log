@@ -1,9 +1,0 @@
-# ninja log v6
-24	2725	7845890219551583	CMakeFiles/hwinfo.dir/main.cpp.obj	81f3f66f0de50303
-4405	5124	7845893286386246	hwinfo.exe	6152a4fd49bb903
-8	4405	7845893242416790	CMakeFiles/hwinfo.dir/HardwareInfoProvider.cpp.obj	7a383de0d3478549
-8	2832	7846559330874722	CMakeFiles/hwinfo.dir/main.cpp.obj	81f3f66f0de50303
-7	4294	7846567272804577	CMakeFiles/hwinfo.dir/HardwareInfoProvider.cpp.obj	7a383de0d3478549
-4294	5609	7846567315670304	hwinfo.exe	6152a4fd49bb903
-27	4208	7846569405747923	CMakeFiles/hwinfo.dir/HardwareInfoProvider.cpp.obj	7a383de0d3478549
-4208	4840	7846569447558493	hwinfo.exe	6152a4fd49bb903

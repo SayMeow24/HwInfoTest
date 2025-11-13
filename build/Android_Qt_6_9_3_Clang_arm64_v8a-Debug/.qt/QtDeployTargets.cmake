@@ -1,2 +1,0 @@
-set(__QT_DEPLOY_TARGET_hwinfo_FILE E:/QtProjects/HwInfoTest/build/Android_Qt_6_9_3_Clang_arm64_v8a-Debug/hwinfo)
-set(__QT_DEPLOY_TARGET_hwinfo_TYPE EXECUTABLE)
