@@ -17,18 +17,6 @@ It prints a clean, structured console report and generates a JSON file with full
 
 ---
 
-## Screenshots
-
-> *(Insert your images here once you have them)*
-
-```
-/assets/screenshot_windows.png
-/assets/screenshot_linux.png
-/assets/json_output.png
-```
-
----
-
 ## Features
 
 ### Cross-platform  
