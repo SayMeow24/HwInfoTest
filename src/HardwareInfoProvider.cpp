@@ -8,11 +8,10 @@
 #ifdef _WIN32
 #define NOMINMAX
 #include <windows.h>
-#include <VersionHelpers.h>
 #include <sysinfoapi.h>
 #include <dxgi.h>
-#include <wbemidl.h>
-#pragma comment(lib, "wbemuuid.lib")
+#include <dxgi1_4.h>
+#include <dxgi1_6.h>
 #pragma comment(lib, "dxgi.lib")
 #endif
 
@@ -23,22 +22,13 @@
 #include <unistd.h>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #endif
 
 // ========================== Helpers ==========================
 
-std::string HardwareInfoProvider::diskTypeToString(DiskType type)
-{
-    switch (type) {
-    case DiskType::HDD:       return "HDD";
-    case DiskType::SSD:       return "SSD";
-    case DiskType::External:  return "External";
-    case DiskType::Removable: return "Removable";
-    default:                  return "Unknown";
-    }
-}
-
-std::string HardwareInfoProvider::formatBytesMB(uint64_t mb)
+std::string HardwareInfoProvider::formatMBToGB(uint64_t mb)
 {
     double gb = mb / 1024.0;
     std::ostringstream oss;
@@ -72,135 +62,104 @@ std::string HardwareInfoProvider::escapeJson(const std::string& s)
     return o.str();
 }
 
-// ========================== getDeviceInfo ==========================
+// ======================== getDeviceInfo =======================
 
 ArgentumDevice HardwareInfoProvider::getDeviceInfo() const
 {
     ArgentumDevice dev;
 
 #ifdef _WIN32
-    fillOSInfoWindows(dev);
+    fillOSWindows(dev);
     fillCPUWindows(dev);
     fillRAMWindows(dev);
     fillGPUWindows(dev);
     fillDisksWindows(dev);
 #elif defined(__linux__)
-    fillOSInfoLinux(dev);
+    fillOSLinux(dev);
     fillCPULinux(dev);
     fillRAMLinux(dev);
     fillGPULinux(dev);
     fillDisksLinux(dev);
 #else
-    dev.os = "Unknown OS";
-    dev.platform = "Unknown";
+    dev.os.name = "Unknown OS";
+    dev.os.platform = "Unknown";
 #endif
 
-    // Сумарна статистика по дисках
+    // aggregated disks
     uint64_t total = 0, free = 0;
     for (const auto& d : dev.disks) {
         total += d.total_mb;
         free += d.free_mb;
     }
-    if (total > 0) {
-        dev.total_disk_mb = total;
-        dev.free_disk_mb = free;
-        dev.used_disk_mb = total - free;
-        dev.disk_usage_percent =
-            (double)(total - free) * 100.0 / (double)total;
-    }
-
-    if (!dev.gpus.empty()) {
-        dev.gpu_count = static_cast<uint32_t>(dev.gpus.size());
-    }
+    dev.total_disk_mb = total;
+    dev.free_disk_mb = free;
+    dev.used_disk_mb = (total > free ? total - free : 0);
+    dev.disk_usage_percent =
+        (total > 0 ? static_cast<double>(dev.used_disk_mb) * 100.0 / static_cast<double>(total) : 0.0);
 
     return dev;
 }
 
-// ========================== printStructure ==========================
+// ========================== printDeviceInfo ==========================
 
-void HardwareInfoProvider::printStructure(const ArgentumDevice& device)
+void HardwareInfoProvider::printDeviceInfo(const ArgentumDevice& dev)
 {
     std::cout << "=== ArgentumDevice Structure ===\n\n";
 
-    std::cout << "Platform: " << device.platform.value_or("Unknown") << "\n\n";
+    std::cout << "Platform: " << dev.os.platform << "\n\n";
 
     std::cout << "OS:\n";
-    std::cout << "  Name: " << device.os << "\n";
-    std::cout << "  Kernel: " << device.os_kernel.value_or("Unknown") << "\n";
-    std::cout << "  Architecture: " << device.os_arch.value_or("Unknown") << "\n\n";
+    std::cout << "  Name: " << dev.os.name << "\n";
+    std::cout << "  Kernel: " << dev.os.kernel << "\n";
+    std::cout << "  Architecture: " << dev.os.architecture << "\n\n";
 
     std::cout << "CPU:\n";
-    std::cout << "  Model: " << device.cpu_model.value_or("Unknown") << "\n";
-    std::cout << "  Cores: " << device.cpu_cores << "\n";
-    if (device.cpu_frequency_mhz) {
-        std::cout << "  Frequency: "
-            << device.cpu_frequency_mhz.value()
-            << " MHz\n";
-    }
-    std::cout << "\n";
+    std::cout << "  Model: " << dev.cpu.model << "\n";
+    std::cout << "  Cores: " << dev.cpu.cores << "\n";
+    std::cout << "  Frequency: " << dev.cpu.frequency_mhz << " MHz\n\n";
 
     std::cout << "RAM:\n";
-    std::cout << "  Total: " << device.ram_mb << " MB ("
-        << formatBytesMB(device.ram_mb) << ")\n";
-    if (device.ram_available_mb)
-        std::cout << "  Available: " << device.ram_available_mb.value() << " MB\n";
-    if (device.ram_used_mb)
-        std::cout << "  Used: " << device.ram_used_mb.value() << " MB\n";
-    if (device.ram_usage_percent)
-        std::cout << "  Usage: "
-        << std::fixed << std::setprecision(1)
-        << device.ram_usage_percent.value() << "%\n";
-    std::cout << "\n";
+    std::cout << "  Total: " << dev.ram.total_mb << " MB ("
+        << formatMBToGB(dev.ram.total_mb) << ")\n";
+    std::cout << "  Available: " << dev.ram.available_mb << " MB\n";
+    std::cout << "  Used: " << dev.ram.used_mb() << " MB\n";
+    std::cout << "  Usage: " << std::fixed << std::setprecision(1)
+        << dev.ram.usage_percent() << "%\n\n";
 
     std::cout << "GPU:\n";
-    if (device.gpu_count)
-        std::cout << "  Count: " << device.gpu_count.value() << "\n\n";
+    if (!dev.gpus.empty())
+        std::cout << "  Count: " << dev.gpus.size() << "\n\n";
 
-    for (size_t i = 0; i < device.gpus.size(); ++i) {
-        const auto& g = device.gpus[i];
+    for (size_t i = 0; i < dev.gpus.size(); ++i) {
+        const auto& g = dev.gpus[i];
         std::cout << "  GPU " << (i + 1) << ": " << g.model << "\n";
-        if (g.vram_mb)
-            std::cout << "    VRAM Total: " << g.vram_mb.value() << " MB ("
-            << formatBytesMB(g.vram_mb.value()) << ")\n";
-        if (g.vram_used_mb)
-            std::cout << "    VRAM Used:  " << g.vram_used_mb.value() << " MB\n";
-        if (g.vram_free_mb)
-            std::cout << "    VRAM Free:  " << g.vram_free_mb.value() << " MB\n";
-        if (g.vram_usage_percent)
-            std::cout << "    Usage: "
-            << std::fixed << std::setprecision(1)
-            << g.vram_usage_percent.value() << "%\n";
-        std::cout << "\n";
+        std::cout << "    VRAM Total: " << g.vram_mb << " MB ("
+            << formatMBToGB(g.vram_mb) << ")\n";
+        std::cout << "    VRAM Used:  " << g.vram_used_mb << " MB\n";
+        std::cout << "    VRAM Free:  " << g.vram_free_mb << " MB\n\n";
     }
 
     std::cout << "Disks:\n";
-    for (const auto& d : device.disks) {
+    for (const auto& d : dev.disks) {
         std::cout << "  " << d.mount_point << " (" << d.filesystem << ")\n";
-        std::cout << "    Type: " << diskTypeToString(d.type) << "\n";
+        std::cout << "    Type: " << d.type << "\n";
         std::cout << "    Size: " << d.total_mb << " MB ("
-            << formatBytesMB(d.total_mb) << ")\n";
+            << formatMBToGB(d.total_mb) << ")\n";
         std::cout << "    Free: " << d.free_mb << " MB\n";
-        std::cout << "    Used: " << d.used_mb << " MB\n";
+        std::cout << "    Used: " << d.used_mb() << " MB\n";
         std::cout << "    Usage: "
             << std::fixed << std::setprecision(1)
-            << d.usage_percent << "%  (Free: "
-            << d.free_percent << "%)\n\n";
+            << d.usage_percent() << "%  (Free: "
+            << d.free_percent() << "%)\n\n";
     }
 
-    if (device.total_disk_mb) {
-        std::cout << "Total Disks:\n";
-        std::cout << "  Total: " << device.total_disk_mb.value()
-            << " MB (" << formatBytesMB(device.total_disk_mb.value()) << ")\n";
-        if (device.free_disk_mb)
-            std::cout << "  Free: " << device.free_disk_mb.value() << " MB\n";
-        if (device.used_disk_mb && device.disk_usage_percent)
-            std::cout << "  Used: " << device.used_disk_mb.value() << " MB ("
-            << std::fixed << std::setprecision(1)
-            << device.disk_usage_percent.value() << "%)\n";
-    }
-
-    std::cout << "\nPrimary Disk Type: "
-        << diskTypeToString(device.primary_disk_type) << "\n";
+    std::cout << "Total Disks:\n";
+    std::cout << "  Total: " << dev.total_disk_mb << " MB ("
+        << formatMBToGB(dev.total_disk_mb) << ")\n";
+    std::cout << "  Free: " << dev.free_disk_mb << " MB\n";
+    std::cout << "  Used: " << dev.used_disk_mb << " MB ("
+        << std::fixed << std::setprecision(1)
+        << dev.disk_usage_percent << "%)\n\n";
 }
 
 // ========================== toJSON ==========================
@@ -208,166 +167,112 @@ void HardwareInfoProvider::printStructure(const ArgentumDevice& device)
 std::string HardwareInfoProvider::toJSON(const ArgentumDevice& dev)
 {
     std::ostringstream out;
-    out << "{\n";
-
-    auto indent = [](int n) {
-        return std::string(n, ' ');
-        };
-
+    auto indent = [](int n) { return std::string(n, ' '); };
     int ind = 2;
 
-    out << indent(ind) << "\"os\": \"" << escapeJson(dev.os) << "\",\n";
+    out << "{\n";
 
-    if (dev.platform)
-        out << indent(ind) << "\"platform\": \"" << escapeJson(*dev.platform) << "\",\n";
-    if (dev.os_kernel)
-        out << indent(ind) << "\"os_kernel\": \"" << escapeJson(*dev.os_kernel) << "\",\n";
-    if (dev.os_arch)
-        out << indent(ind) << "\"os_arch\": \"" << escapeJson(*dev.os_arch) << "\",\n";
+    // OS
+    out << indent(ind) << "\"os\": \"" << escapeJson(dev.os.name) << "\",\n";
+    out << indent(ind) << "\"platform\": \"" << escapeJson(dev.os.platform) << "\",\n";
+    out << indent(ind) << "\"os_kernel\": \"" << escapeJson(dev.os.kernel) << "\",\n";
+    out << indent(ind) << "\"os_arch\": \"" << escapeJson(dev.os.architecture) << "\",\n";
 
-    if (dev.cpu_model)
-        out << indent(ind) << "\"cpu_model\": \"" << escapeJson(*dev.cpu_model) << "\",\n";
+    // CPU
+    out << indent(ind) << "\"cpu_model\": \"" << escapeJson(dev.cpu.model) << "\",\n";
+    out << indent(ind) << "\"cpu_cores\": " << dev.cpu.cores << ",\n";
+    out << indent(ind) << "\"cpu_frequency_mhz\": " << dev.cpu.frequency_mhz << ",\n";
 
-    out << indent(ind) << "\"cpu_cores\": " << dev.cpu_cores << ",\n";
-
-    if (dev.cpu_frequency_mhz)
-        out << indent(ind) << "\"cpu_frequency_mhz\": "
-        << dev.cpu_frequency_mhz.value() << ",\n";
-
-    out << indent(ind) << "\"ram_mb\": " << dev.ram_mb << ",\n";
-
-    if (dev.ram_available_mb)
-        out << indent(ind) << "\"ram_available_mb\": "
-        << dev.ram_available_mb.value() << ",\n";
-    if (dev.ram_used_mb)
-        out << indent(ind) << "\"ram_used_mb\": "
-        << dev.ram_used_mb.value() << ",\n";
-    if (dev.ram_usage_percent)
-        out << indent(ind) << "\"ram_usage_percent\": "
-        << dev.ram_usage_percent.value() << ",\n";
+    // RAM
+    out << indent(ind) << "\"ram_mb\": " << dev.ram.total_mb << ",\n";
+    out << indent(ind) << "\"ram_available_mb\": " << dev.ram.available_mb << ",\n";
+    out << indent(ind) << "\"ram_used_mb\": " << dev.ram.used_mb() << ",\n";
+    out << indent(ind) << "\"ram_usage_percent\": "
+        << dev.ram.usage_percent() << ",\n";
 
     // GPUs
     out << indent(ind) << "\"gpus\": [\n";
     for (size_t i = 0; i < dev.gpus.size(); ++i) {
         const auto& g = dev.gpus[i];
         out << indent(ind + 2) << "{\n";
-        out << indent(ind + 4) << "\"model\": \"" << escapeJson(g.model) << "\"";
-        if (g.vram_mb) {
-            out << ",\n" << indent(ind + 4)
-                << "\"vram_mb\": " << g.vram_mb.value();
-        }
-        if (g.vram_used_mb) {
-            out << ",\n" << indent(ind + 4)
-                << "\"vram_used_mb\": " << g.vram_used_mb.value();
-        }
-        if (g.vram_free_mb) {
-            out << ",\n" << indent(ind + 4)
-                << "\"vram_free_mb\": " << g.vram_free_mb.value();
-        }
-        if (g.vram_usage_percent) {
-            out << ",\n" << indent(ind + 4)
-                << "\"vram_usage_percent\": " << g.vram_usage_percent.value();
-        }
-        out << "\n" << indent(ind + 2) << "}";
-        if (i + 1 < dev.gpus.size())
-            out << ",";
+        out << indent(ind + 4) << "\"model\": \"" << escapeJson(g.model) << "\",\n";
+        out << indent(ind + 4) << "\"vram_mb\": " << g.vram_mb << ",\n";
+        out << indent(ind + 4) << "\"vram_used_mb\": " << g.vram_used_mb << ",\n";
+        out << indent(ind + 4) << "\"vram_free_mb\": " << g.vram_free_mb << "\n";
+        out << indent(ind + 2) << "}";
+        if (i + 1 < dev.gpus.size()) out << ",";
         out << "\n";
     }
     out << indent(ind) << "],\n";
-
-    if (dev.gpu_count)
-        out << indent(ind) << "\"gpu_count\": " << dev.gpu_count.value() << ",\n";
+    out << indent(ind) << "\"gpu_count\": " << dev.gpus.size() << ",\n";
 
     // Disks
     out << indent(ind) << "\"disks\": [\n";
     for (size_t i = 0; i < dev.disks.size(); ++i) {
         const auto& d = dev.disks[i];
         out << indent(ind + 2) << "{\n";
-        out << indent(ind + 4) << "\"mount_point\": \""
-            << escapeJson(d.mount_point) << "\",\n";
-        out << indent(ind + 4) << "\"filesystem\": \""
-            << escapeJson(d.filesystem) << "\",\n";
-        out << indent(ind + 4) << "\"type\": \""
-            << diskTypeToString(d.type) << "\",\n";
+        out << indent(ind + 4) << "\"mount_point\": \"" << escapeJson(d.mount_point) << "\",\n";
+        out << indent(ind + 4) << "\"filesystem\": \"" << escapeJson(d.filesystem) << "\",\n";
+        out << indent(ind + 4) << "\"type\": \"" << escapeJson(d.type) << "\",\n";
         out << indent(ind + 4) << "\"total_mb\": " << d.total_mb << ",\n";
         out << indent(ind + 4) << "\"free_mb\": " << d.free_mb << ",\n";
-        out << indent(ind + 4) << "\"used_mb\": " << d.used_mb << ",\n";
-        out << indent(ind + 4) << "\"usage_percent\": "
-            << d.usage_percent << ",\n";
-        out << indent(ind + 4) << "\"free_percent\": "
-            << d.free_percent << "\n";
+        out << indent(ind + 4) << "\"used_mb\": " << d.used_mb() << ",\n";
+        out << indent(ind + 4) << "\"usage_percent\": " << d.usage_percent() << ",\n";
+        out << indent(ind + 4) << "\"free_percent\": " << d.free_percent() << "\n";
         out << indent(ind + 2) << "}";
-        if (i + 1 < dev.disks.size())
-            out << ",";
+        if (i + 1 < dev.disks.size()) out << ",";
         out << "\n";
     }
-    out << indent(ind) << "]";
+    out << indent(ind) << "],\n";
 
-    if (dev.total_disk_mb || dev.free_disk_mb ||
-        dev.used_disk_mb || dev.disk_usage_percent)
-    {
-        out << ",\n";
-        if (dev.total_disk_mb)
-            out << indent(ind) << "\"total_disk_mb\": "
-            << dev.total_disk_mb.value() << ",\n";
-        if (dev.free_disk_mb)
-            out << indent(ind) << "\"free_disk_mb\": "
-            << dev.free_disk_mb.value() << ",\n";
-        if (dev.used_disk_mb)
-            out << indent(ind) << "\"used_disk_mb\": "
-            << dev.used_disk_mb.value() << ",\n";
-        if (dev.disk_usage_percent)
-            out << indent(ind) << "\"disk_usage_percent\": "
-            << dev.disk_usage_percent.value() << "\n";
-        else {
-            // прибираємо останню кому логічно
-        }
-    }
-    else {
-        out << "\n";
-    }
+    // aggregated disks
+    out << indent(ind) << "\"total_disk_mb\": " << dev.total_disk_mb << ",\n";
+    out << indent(ind) << "\"free_disk_mb\": " << dev.free_disk_mb << ",\n";
+    out << indent(ind) << "\"used_disk_mb\": " << dev.used_disk_mb << ",\n";
+    out << indent(ind) << "\"disk_usage_percent\": " << dev.disk_usage_percent << "\n";
 
-    out << "\n}\n";
+    out << "}\n";
     return out.str();
 }
 
-// ========================== WINDOWS ==========================
+// ============================= WINDOWS =============================
 
 #ifdef _WIN32
 
-void HardwareInfoProvider::fillOSInfoWindows(ArgentumDevice& dev) const
+void HardwareInfoProvider::fillOSWindows(ArgentumDevice& dev) const
 {
-    dev.platform = "Windows";
+    dev.os.platform = "Windows";
 
-    OSVERSIONINFOEXA osvi = {};
+    OSVERSIONINFOEXA osvi{};
     osvi.dwOSVersionInfoSize = sizeof(osvi);
 #pragma warning(push)
 #pragma warning(disable: 4996)
-    if (GetVersionExA((OSVERSIONINFOA*)&osvi)) {
+    if (GetVersionExA(reinterpret_cast<OSVERSIONINFOA*>(&osvi))) {
 #pragma warning(pop)
         std::ostringstream oss;
         oss << "Windows " << osvi.dwMajorVersion << "." << osvi.dwMinorVersion;
-        dev.os = oss.str();
+        dev.os.name = oss.str();
 
         std::ostringstream k;
         k << osvi.dwMajorVersion << "."
             << osvi.dwMinorVersion << "."
             << osvi.dwBuildNumber;
-        dev.os_kernel = k.str();
+        dev.os.kernel = k.str();
     }
     else {
-        dev.os = "Windows (unknown version)";
+        dev.os.name = "Windows (unknown version)";
+        dev.os.kernel = "unknown";
     }
 
     SYSTEM_INFO si;
     GetNativeSystemInfo(&si);
     switch (si.wProcessorArchitecture) {
     case PROCESSOR_ARCHITECTURE_AMD64:
-        dev.os_arch = "x86_64"; break;
+        dev.os.architecture = "x86_64"; break;
     case PROCESSOR_ARCHITECTURE_INTEL:
-        dev.os_arch = "x86";    break;
+        dev.os.architecture = "x86";    break;
     default:
-        dev.os_arch = "Unknown"; break;
+        dev.os.architecture = "Unknown"; break;
     }
 }
 
@@ -375,7 +280,7 @@ void HardwareInfoProvider::fillCPUWindows(ArgentumDevice& dev) const
 {
     SYSTEM_INFO si;
     GetSystemInfo(&si);
-    dev.cpu_cores = si.dwNumberOfProcessors;
+    dev.cpu.cores = si.dwNumberOfProcessors;
 
     HKEY hKey;
     if (RegOpenKeyExA(HKEY_LOCAL_MACHINE,
@@ -385,17 +290,17 @@ void HardwareInfoProvider::fillCPUWindows(ArgentumDevice& dev) const
         char name[256];
         DWORD size = sizeof(name);
         if (RegQueryValueExA(hKey, "ProcessorNameString", nullptr, nullptr,
-            (LPBYTE)name, &size) == ERROR_SUCCESS)
+            reinterpret_cast<LPBYTE>(name), &size) == ERROR_SUCCESS)
         {
-            dev.cpu_model = std::string(name);
+            dev.cpu.model = std::string(name);
         }
 
         DWORD mhz = 0;
         size = sizeof(mhz);
         if (RegQueryValueExA(hKey, "~MHz", nullptr, nullptr,
-            (LPBYTE)&mhz, &size) == ERROR_SUCCESS)
+            reinterpret_cast<LPBYTE>(&mhz), &size) == ERROR_SUCCESS)
         {
-            dev.cpu_frequency_mhz = mhz;
+            dev.cpu.frequency_mhz = mhz;
         }
         RegCloseKey(hKey);
     }
@@ -403,55 +308,89 @@ void HardwareInfoProvider::fillCPUWindows(ArgentumDevice& dev) const
 
 void HardwareInfoProvider::fillRAMWindows(ArgentumDevice& dev) const
 {
-    MEMORYSTATUSEX ms = {};
+    MEMORYSTATUSEX ms{};
     ms.dwLength = sizeof(ms);
     if (GlobalMemoryStatusEx(&ms)) {
         uint64_t total_mb = ms.ullTotalPhys / (1024ull * 1024ull);
         uint64_t avail_mb = ms.ullAvailPhys / (1024ull * 1024ull);
-        dev.ram_mb = total_mb;
-        dev.ram_available_mb = avail_mb;
-        dev.ram_used_mb = total_mb - avail_mb;
-        dev.ram_usage_percent =
-            (double)(total_mb - avail_mb) * 100.0 / (double)total_mb;
+        dev.ram.total_mb = total_mb;
+        dev.ram.available_mb = avail_mb;
     }
 }
 
 void HardwareInfoProvider::fillGPUWindows(ArgentumDevice& dev) const
 {
-    IDXGIFactory* pFactory = nullptr;
-    if (FAILED(CreateDXGIFactory(__uuidof(IDXGIFactory), (void**)&pFactory)))
+    IDXGIFactory6* factory = nullptr;
+    if (FAILED(CreateDXGIFactory2(0, IID_PPV_ARGS(&factory))))
         return;
 
-    UINT i = 0;
-    IDXGIAdapter* pAdapter = nullptr;
-    while (pFactory->EnumAdapters(i, &pAdapter) != DXGI_ERROR_NOT_FOUND) {
-        DXGI_ADAPTER_DESC desc;
-        if (SUCCEEDED(pAdapter->GetDesc(&desc))) {
+    UINT index = 0;
+    IDXGIAdapter1* adapter = nullptr;
+
+    while (factory->EnumAdapters1(index, &adapter) != DXGI_ERROR_NOT_FOUND)
+    {
+        DXGI_ADAPTER_DESC1 desc{};
+        if (SUCCEEDED(adapter->GetDesc1(&desc)))
+        {
             char name[256] = {};
             wcstombs(name, desc.Description, sizeof(name) - 1);
             std::string model(name);
 
-            // ІГНОРУЄМО Microsoft Basic Render Driver
+            // skip Microsoft Basic Render Driver
             if (model.find("Microsoft Basic Render Driver") != std::string::npos) {
-                pAdapter->Release();
-                ++i;
+                adapter->Release();
+                ++index;
                 continue;
             }
 
             GPUInfo gpu;
             gpu.model = model;
 
-            uint64_t vram_mb = desc.DedicatedVideoMemory / (1024ull * 1024ull);
-            if (vram_mb > 0)
-                gpu.vram_mb = vram_mb;
+            uint64_t total_vram_mb =
+                desc.DedicatedVideoMemory / (1024ull * 1024ull);
+            gpu.vram_mb = total_vram_mb;
+
+            bool success = false;
+
+            IDXGIAdapter3* adapter3 = nullptr;
+            if (SUCCEEDED(adapter->QueryInterface(IID_PPV_ARGS(&adapter3))))
+            {
+                DXGI_QUERY_VIDEO_MEMORY_INFO info{};
+                if (SUCCEEDED(adapter3->QueryVideoMemoryInfo(
+                    0,
+                    DXGI_MEMORY_SEGMENT_GROUP_LOCAL,
+                    &info)))
+                {
+                    uint64_t budget_mb = info.Budget / (1024ull * 1024ull);
+
+                    if (budget_mb > 0)
+                    {
+                        // Budget = FREE VRAM (особливо на AMD)
+                        gpu.vram_free_mb = budget_mb;
+
+                        // Used = Total - Free
+                        gpu.vram_used_mb =
+                            (total_vram_mb > budget_mb ? total_vram_mb - budget_mb : 0);
+
+                        success = true;
+                    }
+                }
+                adapter3->Release();
+            }
+
+            if (!success) {
+                gpu.vram_free_mb = 0;
+                gpu.vram_used_mb = 0;
+            }
 
             dev.gpus.push_back(gpu);
         }
-        pAdapter->Release();
-        ++i;
+
+        adapter->Release();
+        ++index;
     }
 
-    if (pFactory) pFactory->Release();
+    factory->Release();
 }
 
 void HardwareInfoProvider::fillDisksWindows(ArgentumDevice& dev) const
@@ -461,7 +400,6 @@ void HardwareInfoProvider::fillDisksWindows(ArgentumDevice& dev) const
         return;
 
     char root[4] = "A:/";
-    bool primarySet = false;
 
     for (int i = 0; i < 26; ++i) {
         if (!(mask & (1 << i))) continue;
@@ -472,13 +410,15 @@ void HardwareInfoProvider::fillDisksWindows(ArgentumDevice& dev) const
 
         DiskInfo d;
         d.mount_point = root;
-        d.filesystem = "NTFS";   // спрощено
+        d.filesystem = "NTFS"; // спрощено
 
-        DiskType dt = DiskType::Unknown;
-        if (type == DRIVE_FIXED)      dt = DiskType::SSD;       // не розрізняємо SSD/HDD
-        else if (type == DRIVE_REMOVABLE) dt = DiskType::Removable;
-
-        d.type = dt;
+        switch (type) {
+        case DRIVE_FIXED:     d.type = "Fixed";     break;
+        case DRIVE_REMOVABLE: d.type = "Removable"; break;
+        case DRIVE_CDROM:     d.type = "CDROM";     break;
+        case DRIVE_REMOTE:    d.type = "Network";   break;
+        default:              d.type = "Unknown";   break;
+        }
 
         ULARGE_INTEGER freeBytesAvailable, totalBytes, freeBytes;
         if (GetDiskFreeSpaceExA(root, &freeBytesAvailable, &totalBytes, &freeBytes)) {
@@ -486,16 +426,6 @@ void HardwareInfoProvider::fillDisksWindows(ArgentumDevice& dev) const
             uint64_t free_mb = freeBytes.QuadPart / (1024ull * 1024ull);
             d.total_mb = total_mb;
             d.free_mb = free_mb;
-            d.used_mb = total_mb - free_mb;
-            if (total_mb > 0) {
-                d.usage_percent = (double)(total_mb - free_mb) * 100.0 / (double)total_mb;
-                d.free_percent = 100.0 - d.usage_percent;
-            }
-        }
-
-        if (!primarySet && type == DRIVE_FIXED) {
-            dev.primary_disk_type = dt;
-            primarySet = true;
         }
 
         dev.disks.push_back(d);
@@ -504,22 +434,39 @@ void HardwareInfoProvider::fillDisksWindows(ArgentumDevice& dev) const
 
 #endif // _WIN32
 
-// ========================== LINUX ==========================
+// ============================= LINUX =============================
 
 #ifdef __linux__
 
-void HardwareInfoProvider::fillOSInfoLinux(ArgentumDevice& dev) const
+static bool readUint64FromFile(const std::string& path, uint64_t& value)
 {
-    dev.platform = "Linux";
+    std::ifstream in(path);
+    if (!in.is_open())
+        return false;
 
-    struct utsname u;
+    long long v = 0;
+    in >> v;
+    if (!in.fail() && v >= 0) {
+        value = static_cast<uint64_t>(v);
+        return true;
+    }
+    return false;
+}
+
+void HardwareInfoProvider::fillOSLinux(ArgentumDevice& dev) const
+{
+    dev.os.platform = "Linux";
+
+    struct utsname u {};
     if (uname(&u) == 0) {
-        dev.os = u.sysname;
-        dev.os_kernel = u.release;
-        dev.os_arch = u.machine;
+        dev.os.name = u.sysname;
+        dev.os.kernel = u.release;
+        dev.os.architecture = u.machine;
     }
     else {
-        dev.os = "Linux (uname failed)";
+        dev.os.name = "Linux (uname failed)";
+        dev.os.kernel = "unknown";
+        dev.os.architecture = "unknown";
     }
 }
 
@@ -527,7 +474,7 @@ void HardwareInfoProvider::fillCPULinux(ArgentumDevice& dev) const
 {
     long nprocs = sysconf(_SC_NPROCESSORS_ONLN);
     if (nprocs > 0)
-        dev.cpu_cores = static_cast<uint32_t>(nprocs);
+        dev.cpu.cores = static_cast<uint32_t>(nprocs);
 
     FILE* f = std::fopen("/proc/cpuinfo", "r");
     if (!f) return;
@@ -537,12 +484,12 @@ void HardwareInfoProvider::fillCPULinux(ArgentumDevice& dev) const
         if (std::strncmp(buf, "model name", 10) == 0) {
             char* colon = std::strchr(buf, ':');
             if (colon) {
-                std::string s = colon + 1;
-                while (!s.empty() && (s.front() == ' ' || s.front() == '\t'))
-                    s.erase(s.begin());
-                while (!s.empty() && (s.back() == '\n' || s.back() == '\r'))
-                    s.pop_back();
-                dev.cpu_model = s;
+                colon++;
+                while (*colon == ' ' || *colon == '\t') ++colon;
+                std::string name = colon;
+                while (!name.empty() && (name.back() == '\n' || name.back() == '\r'))
+                    name.pop_back();
+                dev.cpu.model = name;
                 break;
             }
         }
@@ -552,67 +499,152 @@ void HardwareInfoProvider::fillCPULinux(ArgentumDevice& dev) const
 
 void HardwareInfoProvider::fillRAMLinux(ArgentumDevice& dev) const
 {
-    struct sysinfo info;
+    struct sysinfo info {};
     if (sysinfo(&info) == 0) {
-        uint64_t total_mb = info.totalram;
-        total_mb = total_mb * info.mem_unit / (1024ull * 1024ull);
-
-        uint64_t free_mb = info.freeram;
-        free_mb = free_mb * info.mem_unit / (1024ull * 1024ull);
-
-        dev.ram_mb = total_mb;
-        dev.ram_available_mb = free_mb;
-        dev.ram_used_mb = total_mb - free_mb;
-        dev.ram_usage_percent =
-            (double)(total_mb - free_mb) * 100.0 / (double)total_mb;
+        uint64_t total_mb = static_cast<uint64_t>(info.totalram) * info.mem_unit / (1024ull * 1024ull);
+        uint64_t free_mb = static_cast<uint64_t>(info.freeram) * info.mem_unit / (1024ull * 1024ull);
+        dev.ram.total_mb = total_mb;
+        dev.ram.available_mb = free_mb;
     }
 }
 
 void HardwareInfoProvider::fillGPULinux(ArgentumDevice& dev) const
 {
-    // Дуже спрощено: читаємо lspci, якщо доступний
-    FILE* pipe = popen("lspci | grep -i 'vga\\|3d\\|display'", "r");
-    if (!pipe)
-        return;
+    namespace fs = std::filesystem;
 
-    char line[512];
-    while (fgets(line, sizeof(line), pipe)) {
-        std::string s(line);
-        while (!s.empty() && (s.back() == '\n' || s.back() == '\r'))
-            s.pop_back();
+    std::vector<std::string> gpuModels;
 
-        GPUInfo g;
-        g.model = s;
-        dev.gpus.push_back(g);
+    // 1) lspci для назв
+    if (FILE* pipe = popen("lspci | grep -i 'vga\\|3d\\|display'", "r")) {
+        char line[512];
+        while (fgets(line, sizeof(line), pipe)) {
+            std::string s(line);
+            while (!s.empty() && (s.back() == '\n' || s.back() == '\r'))
+                s.pop_back();
+            gpuModels.push_back(s);
+        }
+        pclose(pipe);
     }
-    pclose(pipe);
+
+    std::vector<GPUInfo> gpus;
+
+    // 2) AMD (amdgpu): sysfs mem_info_vram_*
+    for (int cardIndex = 0; cardIndex < 8; ++cardIndex) {
+        std::string base = "/sys/class/drm/card" + std::to_string(cardIndex) + "/device";
+        fs::path totalPath = fs::path(base) / "mem_info_vram_total";
+        fs::path usedPath = fs::path(base) / "mem_info_vram_used";
+
+        if (fs::exists(totalPath) && fs::exists(usedPath)) {
+            uint64_t total_bytes = 0;
+            uint64_t used_bytes = 0;
+
+            if (readUint64FromFile(totalPath.string(), total_bytes) &&
+                readUint64FromFile(usedPath.string(), used_bytes))
+            {
+                GPUInfo g;
+
+                if (!gpuModels.empty()) {
+                    g.model = gpuModels.front();
+                    gpuModels.erase(gpuModels.begin());
+                }
+                else {
+                    g.model = "GPU card" + std::to_string(cardIndex);
+                }
+
+                uint64_t total_mb = total_bytes / (1024ull * 1024ull);
+                uint64_t used_mb = used_bytes / (1024ull * 1024ull);
+
+                g.vram_mb = total_mb;
+                g.vram_used_mb = used_mb;
+                g.vram_free_mb = (total_mb > used_mb ? total_mb - used_mb : 0);
+
+                gpus.push_back(g);
+            }
+        }
+    }
+
+    // 3) NVIDIA: nvidia-smi
+    if (gpus.empty()) {
+        if (FILE* pipe = popen("nvidia-smi --query-gpu=memory.total,memory.used --format=csv,noheader,nounits", "r")) {
+            char line[256];
+            int idx = 0;
+            while (fgets(line, sizeof(line), pipe)) {
+                unsigned long long total_mb = 0;
+                unsigned long long used_mb = 0;
+                if (sscanf(line, "%llu , %llu", &total_mb, &used_mb) == 2 ||
+                    sscanf(line, "%llu, %llu", &total_mb, &used_mb) == 2)
+                {
+                    GPUInfo g;
+                    if (idx < static_cast<int>(gpuModels.size()))
+                        g.model = gpuModels[idx];
+                    else
+                        g.model = "NVIDIA GPU " + std::to_string(idx);
+
+                    g.vram_mb = static_cast<uint64_t>(total_mb);
+                    g.vram_used_mb = static_cast<uint64_t>(used_mb);
+                    g.vram_free_mb =
+                        (total_mb > used_mb ? static_cast<uint64_t>(total_mb - used_mb) : 0ull);
+
+                    gpus.push_back(g);
+                    ++idx;
+                }
+            }
+            pclose(pipe);
+        }
+    }
+
+    // 4) fallback: тільки моделі
+    if (gpus.empty() && !gpuModels.empty()) {
+        for (const auto& s : gpuModels) {
+            GPUInfo g;
+            g.model = s;
+            gpus.push_back(g);
+        }
+    }
+
+    for (const auto& g : gpus)
+        dev.gpus.push_back(g);
 }
 
 void HardwareInfoProvider::fillDisksLinux(ArgentumDevice& dev) const
 {
-    // Поки що тільки root "/"
-    struct statvfs vfs;
-    if (statvfs("/", &vfs) == 0) {
+    FILE* f = std::fopen("/proc/mounts", "r");
+    if (!f) return;
+
+    char devName[256];
+    char mountPoint[256];
+    char fsType[64];
+    char opts[256];
+    int freq, passno;
+
+    while (std::fscanf(f, "%255s %255s %63s %255s %d %d\n",
+        devName, mountPoint, fsType, opts, &freq, &passno) == 6)
+    {
+        std::string mp = mountPoint;
+        std::string fs = fsType;
+
+        if (mp.rfind("/sys", 0) == 0 || mp.rfind("/proc", 0) == 0 ||
+            mp.rfind("/run", 0) == 0 || mp.rfind("/dev", 0) == 0)
+            continue;
+
+        struct statvfs vfs {};
+        if (statvfs(mountPoint, &vfs) != 0)
+            continue;
+
+        uint64_t total_mb = static_cast<uint64_t>(vfs.f_blocks) * vfs.f_frsize / (1024ull * 1024ull);
+        uint64_t free_mb = static_cast<uint64_t>(vfs.f_bfree) * vfs.f_frsize / (1024ull * 1024ull);
+
         DiskInfo d;
-        d.mount_point = "/";
-        d.filesystem = "unknown";
-
-        uint64_t total = (uint64_t)vfs.f_blocks * (uint64_t)vfs.f_frsize;
-        uint64_t free = (uint64_t)vfs.f_bfree * (uint64_t)vfs.f_frsize;
-
-        d.total_mb = total / (1024ull * 1024ull);
-        d.free_mb = free / (1024ull * 1024ull);
-        d.used_mb = d.total_mb - d.free_mb;
-        if (d.total_mb > 0) {
-            d.usage_percent = (double)(d.total_mb - d.free_mb) * 100.0 / (double)d.total_mb;
-            d.free_percent = 100.0 - d.usage_percent;
-        }
-
-        d.type = DiskType::Unknown;
-        dev.primary_disk_type = DiskType::Unknown;
+        d.mount_point = mp;
+        d.filesystem = fs;
+        d.type = "LinuxFS";
+        d.total_mb = total_mb;
+        d.free_mb = free_mb;
 
         dev.disks.push_back(d);
     }
+
+    std::fclose(f);
 }
 
 #endif // __linux__
